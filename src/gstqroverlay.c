@@ -2,6 +2,7 @@
  * GStreamer
  * Copyright (C) 2006 Stefan Kost <ensonic@users.sf.net>
  * Copyright (C) 2015 anthony <<user@hostname.org>>
+ * Modified 2019 Andreas Frisch <fraxinas@schaffenburg.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -59,13 +60,16 @@ GST_DEBUG_CATEGORY_STATIC (gst_qroverlay_debug);
 enum
 {
   PROP_0,
-  PROP_X_AXIS,
-  PROP_Y_AXIS,
+  PROP_X_OFFSET,
+  PROP_Y_OFFSET,
+  PROP_X_PERCENT,
+  PROP_Y_PERCENT,
   PROP_PIXEL_SIZE,
   PROP_DATA_INTERVAL_BUFFERS,
   PROP_DATA_SPAN_BUFFERS,
   PROP_EXTRA_DATA_NAME,
   PROP_EXTRA_DATA_ARRAY,
+  PROP_STRING,
   PROP_QRCODE_ERROR_CORRECTION,
 };
 
@@ -147,13 +151,23 @@ gst_qroverlay_class_init (GstqroverlayClass * klass)
   gobject_class->get_property = gst_qroverlay_get_property;
 
   g_object_class_install_property (gobject_class,
-      PROP_X_AXIS, g_param_spec_float ("x",
+    PROP_X_OFFSET, g_param_spec_int ("x-offset", "X offset",
+    "X offset (in pixels from the left) [-1 = use x-percent]",
+    -1, G_MAXINT, 0, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class,
+    PROP_Y_OFFSET, g_param_spec_int ("y-offset", "Y offset",
+    "Y offset (in pixels from the top) [-1 = use y-percent]",
+    -1, G_MAXINT, 0, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class,
+      PROP_X_PERCENT, g_param_spec_float ("x-percent",
       "X position (in percent of the width)",
 	    "X position (in percent of the width)", 
       0.0, 100.0, 50.0, G_PARAM_READWRITE));
 
   g_object_class_install_property (gobject_class,
-      PROP_Y_AXIS, g_param_spec_float ("y",
+      PROP_Y_PERCENT, g_param_spec_float ("y-percent",
       "Y position (in percent of the height)",
 	  "Y position (in percent of the height)", 
       0.0, 100.0, 50.0, G_PARAM_READWRITE));
@@ -185,6 +199,11 @@ gst_qroverlay_class_init (GstqroverlayClass * klass)
 	"List of comma separated values that the extra data value will be cycled from at each interval, exemple array structure : \"240,480,720,960,1200,1440,1680,1920\"",
 	NULL, G_PARAM_READWRITE));
 
+  g_object_class_install_property (gobject_class,
+    PROP_STRING, g_param_spec_string ("string", "Encode string",
+    "Fixed string for encoding into QR Code",
+    NULL, G_PARAM_READWRITE));
+
   g_object_class_install_property (gobject_class, PROP_QRCODE_ERROR_CORRECTION,
       g_param_spec_enum ("qrcode-error-correction", "qrcode-error-correction", "qrcode-error-correction",
           GST_TYPE_QRCODE_QUALITY, DEFAULT_PROP_QUALITY,
@@ -215,6 +234,8 @@ gst_qroverlay_init (Gstqroverlay *filter)
   filter->frame_number = 1;
   filter->x_percent = 50.0;
   filter->y_percent = 50.0;
+  filter->x_offset = -1;
+  filter->y_offset = -1;
   filter->qrcode_quality = DEFAULT_PROP_QUALITY;
   filter->level = QR_ECLEVEL_M;
   filter->extra_data_name = 0;
@@ -226,6 +247,7 @@ gst_qroverlay_init (Gstqroverlay *filter)
   filter->extra_data_span_buffers = 1;
   filter->span_frame = 0;
   filter->qrcode_size = 1;
+  filter->string = NULL;
 }
 
 static void
@@ -235,10 +257,16 @@ gst_qroverlay_set_property (GObject * object, guint prop_id,
   Gstqroverlay *filter = GST_QROVERLAY (object);
 
   switch (prop_id) {
-    case PROP_X_AXIS:
+    case PROP_X_OFFSET:
+      filter->x_offset = g_value_get_int (value);
+      break;
+    case PROP_Y_OFFSET:
+      filter->y_offset = g_value_get_int (value);
+      break;
+    case PROP_X_PERCENT:
       filter->x_percent = g_value_get_float (value);
       break;
-    case PROP_Y_AXIS:
+    case PROP_Y_PERCENT:
       filter->y_percent = g_value_get_float (value);
       break;
     case PROP_PIXEL_SIZE:
@@ -259,6 +287,10 @@ gst_qroverlay_set_property (GObject * object, guint prop_id,
     case PROP_EXTRA_DATA_ARRAY:
       filter->extra_data_array = g_value_dup_string (value);
       break;
+    case PROP_STRING:
+      filter->string = g_value_dup_string (value);
+      GST_DEBUG_OBJECT(filter, "set fixed string %s", filter->string);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -272,10 +304,16 @@ gst_qroverlay_get_property (GObject * object, guint prop_id,
   Gstqroverlay *filter = GST_QROVERLAY (object);
 
   switch (prop_id) {
-    case PROP_X_AXIS:
+    case PROP_X_OFFSET:
+      g_value_set_int (value, filter->x_offset);
+      break;
+    case PROP_Y_OFFSET:
+      g_value_set_int (value, filter->y_offset);
+      break;
+    case PROP_X_PERCENT:
       g_value_set_float (value, filter->x_percent);
       break;
-    case PROP_Y_AXIS:
+    case PROP_Y_PERCENT:
       g_value_set_float (value, filter->y_percent);
       break;
     case PROP_PIXEL_SIZE:
@@ -295,6 +333,9 @@ gst_qroverlay_get_property (GObject * object, guint prop_id,
       break;
     case PROP_EXTRA_DATA_ARRAY:
       g_value_set_string (value, filter->extra_data_array);
+      break;
+    case PROP_STRING:
+      g_value_set_string (value, filter->string);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -462,17 +503,18 @@ void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbu
   GstMapInfo current_info;
   guchar *source_data;
   register int32_t k, y, x, yy, realwidth, y_position, x_position, line = 0;
-  int img_res, quarter_img_res;
 
   GST_DEBUG_OBJECT(filter, "Overlay QRcode in frame");
   gst_buffer_map(outbuf, &current_info, GST_MAP_WRITE);
   realwidth = (qrcode->width + 4 * 2) * filter->qrcode_size;
-  /* White bg */
-  x_position = (int)(filter->width - realwidth) * (filter->x_percent / 100);
-  y_position = (int)(filter->height - realwidth) * (filter->y_percent / 100);
+  x_position = filter->x_offset > 0 ? filter->x_offset : (int)(filter->width - realwidth) * (filter->x_percent / 100);
+  y_position = filter->y_offset > 0 ? filter->y_offset : (int)(filter->height - realwidth) * (filter->y_percent / 100);
   x_position = GST_ROUND_DOWN_2(x_position);
   y_position = GST_ROUND_DOWN_4(y_position);
+#if 0
+  /* White bg */
   GST_LOG_OBJECT(filter, "Add white background in frame");
+	int img_res, quarter_img_res;
   img_res = filter->width * filter->height;
   quarter_img_res = img_res / 4;
   for(y=y_position; y < realwidth + y_position; y++) {
@@ -487,6 +529,7 @@ void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbu
       }
     }
   }
+#endif
   GST_LOG_OBJECT(filter, "Add data in frame");
   /* data */
   line += 4 * filter->qrcode_size * filter->width;
@@ -518,13 +561,17 @@ gst_qroverlay_transform_ip (GstBaseTransform * base, GstBuffer * outbuf)
   QRcode *qrcode;
   gchar *encode_string;
 
-  if (GST_CLOCK_TIME_IS_VALID (GST_BUFFER_TIMESTAMP (outbuf)))
-    gst_object_sync_values (GST_OBJECT (filter), GST_BUFFER_TIMESTAMP (outbuf));
-  if (!(encode_string = malloc(150 * sizeof(char*))))
-	GST_ERROR_OBJECT(filter, "can't alloc memory to timestamp");
-  encode_string = build_string(base, outbuf, encode_string);
-  GST_INFO_OBJECT(filter, "String will be encoded : %s", encode_string);
-  qrcode = QRcode_encodeString((const char*)encode_string, 0, filter->qrcode_quality, QR_MODE_8, 0);
+  if (filter->string) {
+    encode_string = g_strdup (filter->string);
+  } else {
+    if (GST_CLOCK_TIME_IS_VALID (GST_BUFFER_TIMESTAMP (outbuf)))
+      gst_object_sync_values (GST_OBJECT (filter), GST_BUFFER_TIMESTAMP (outbuf));
+    if (!(encode_string = malloc(150 * sizeof(char*))))
+      GST_ERROR_OBJECT(filter, "can't alloc memory to timestamp");
+    encode_string = build_string(base, outbuf, encode_string);
+    GST_INFO_OBJECT(filter, "String will be encoded : %s", encode_string);
+  }
+  qrcode = QRcode_encodeString((const char*)encode_string, 0, filter->qrcode_quality, QR_MODE_8, !!(filter->string));
   g_free(encode_string);
   if (qrcode) {
   	GST_DEBUG_OBJECT(filter, "String encoded");

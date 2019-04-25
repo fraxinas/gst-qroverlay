@@ -2,6 +2,7 @@
  * GStreamer
  * Copyright (C) 2006 Stefan Kost <ensonic@users.sf.net>
  * Copyright (C) 2015 anthony <<user@hostname.org>>
+ * Modified 2019 Andreas Frisch <fraxinas@schaffenburg.org>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -58,6 +59,9 @@ struct _Gstqroverlay {
   gchar		*framerate_string;
   const gchar 	*extra_data_name;
   const gchar		*extra_data_array;
+  gchar		*string;
+  gint		x_offset;
+  gint		y_offset;
   gfloat	x_percent;
   gfloat	y_percent;
   gboolean	silent;
