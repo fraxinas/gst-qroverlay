@@ -66,6 +66,8 @@ struct _Gstqroverlay {
   gfloat	y_percent;
   gboolean	silent;
   gboolean	extra_data_enabled;
+  gboolean  background;
+  GstVideoInfo videoinfo;
 };
 
 struct _GstqroverlayClass {

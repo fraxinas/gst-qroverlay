@@ -18,7 +18,7 @@ libgstqroverlay_la_SOURCES = gstqroverlay.c gstqroverlay.h
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
 libgstqroverlay_la_CFLAGS = $(GST_CFLAGS) $(LIBQRENCODE_CFLAGS)
-libgstqroverlay_la_LIBADD = $(GST_LIBS) $(LIBQRENCODE_LIBS)
+libgstqroverlay_la_LIBADD = $(GST_LIBS) $(LIBQRENCODE_LIBS) -lgstvideo-1.0
 libgstqroverlay_la_LDFLAGS	 = $(GST_PLUGIN_LDFLAGS)
 libgstqroverlay_la_LIBTOOLFLAGS = --tag=disable-static
 

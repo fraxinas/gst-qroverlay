@@ -44,6 +44,7 @@
 #endif
 
 #include <gst/gst.h>
+#include <gst/video/video.h>
 #include <gst/base/gstbasetransform.h>
 #include <gst/controller/controller.h>
 
@@ -71,6 +72,7 @@ enum
   PROP_EXTRA_DATA_ARRAY,
   PROP_STRING,
   PROP_QRCODE_ERROR_CORRECTION,
+  PROP_BACKGROUND,
 };
 
 
@@ -178,6 +180,11 @@ gst_qroverlay_class_init (GstqroverlayClass * klass)
 	  1, 100.0, 1, G_PARAM_READWRITE));
 
   g_object_class_install_property (gobject_class, 
+  	  PROP_BACKGROUND, g_param_spec_boolean("background", 
+  	  "background", "Whether to render a white box behind the QR Code",
+	  TRUE, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class, 
   	  PROP_DATA_INTERVAL_BUFFERS, g_param_spec_int64 ("extra-data-interval-buffers", 
   	  "extra-data-interval-buffers", "Extra data appened into the Qrcode at the first buffer of each interval",
 	  0, G_MAXINT64, 60, G_PARAM_READWRITE));
@@ -247,6 +254,7 @@ gst_qroverlay_init (Gstqroverlay *filter)
   filter->extra_data_span_buffers = 1;
   filter->span_frame = 0;
   filter->qrcode_size = 1;
+  filter->background = TRUE;
   filter->string = NULL;
 }
 
@@ -290,6 +298,9 @@ gst_qroverlay_set_property (GObject * object, guint prop_id,
     case PROP_STRING:
       filter->string = g_value_dup_string (value);
       GST_DEBUG_OBJECT(filter, "set fixed string %s", filter->string);
+      break;
+    case PROP_BACKGROUND:
+      filter->background = g_value_get_boolean (value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -337,6 +348,9 @@ gst_qroverlay_get_property (GObject * object, guint prop_id,
     case PROP_STRING:
       g_value_set_string (value, filter->string);
       break;
+    case PROP_BACKGROUND:
+      g_value_set_boolean (value, filter->background);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -356,6 +370,9 @@ gst_qroverlay_set_caps (GstBaseTransform * trans, GstCaps * in, GstCaps * out)
 	filter->framerate_string = g_strdup_value_contents(framerate_value);
 	filter->width = atoi(g_strdup_value_contents(gst_structure_get_value (structure, "width")));
 	filter->height = atoi(g_strdup_value_contents(gst_structure_get_value (structure, "height")));
+	if (!gst_video_info_from_caps (&filter->videoinfo, in))
+		GST_ERROR_OBJECT(filter, "couldn't parse video info from CAPS");
+	GST_INFO_OBJECT(filter, "GstVideoInfo width x height=%dx%d", filter->videoinfo.width, filter->videoinfo.height);
 	switch(filter->qrcode_quality) {
 		case 0:
 			filter->level = QR_ECLEVEL_L;
@@ -500,38 +517,53 @@ gchar *build_string(GstBaseTransform * base, GstBuffer * outbuf, gchar *encode_s
 
 void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbuf)
 {
-  GstMapInfo current_info;
   guchar *source_data;
   register int32_t k, y, x, yy, realwidth, y_position, x_position, line = 0;
+  GstVideoFrame *frame = g_malloc0 (sizeof (GstVideoFrame));
+  gint plane;
+  guint8 *frame_data;
 
-  GST_DEBUG_OBJECT(filter, "Overlay QRcode in frame");
-  gst_buffer_map(outbuf, &current_info, GST_MAP_WRITE);
+  if (!gst_video_frame_map (frame, &filter->videoinfo, outbuf, GST_MAP_WRITE)) {
+    g_free (frame);
+    GST_ERROR_OBJECT(filter, "Couldn't map video frame!");
+  }
+
   realwidth = (qrcode->width + 4 * 2) * filter->qrcode_size;
-  x_position = filter->x_offset > 0 ? filter->x_offset : (int)(filter->width - realwidth) * (filter->x_percent / 100);
-  y_position = filter->y_offset > 0 ? filter->y_offset : (int)(filter->height - realwidth) * (filter->y_percent / 100);
+
+  x_position = (int)(filter->width - realwidth) * (filter->x_percent / 100);
+  y_position = (int)(filter->height - realwidth) * (filter->y_percent / 100);
   x_position = GST_ROUND_DOWN_2(x_position);
   y_position = GST_ROUND_DOWN_4(y_position);
-#if 0
-  /* White bg */
-  GST_LOG_OBJECT(filter, "Add white background in frame");
-	int img_res, quarter_img_res;
-  img_res = filter->width * filter->height;
-  quarter_img_res = img_res / 4;
-  for(y=y_position; y < realwidth + y_position; y++) {
-    memset(current_info.data + (filter->width * y + x_position), 0xff, realwidth);
-    if (y % 4 == 0)
+
+  if (filter->background)
+  {
+    GST_LOG_OBJECT(filter, "Add white background in frame");
+
+    frame_data = (guint8 *) GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
+    gint stride = GST_VIDEO_INFO_PLANE_STRIDE(&filter->videoinfo, 0);
+    y = y_position;
+    guint8 *off = frame_data + y*stride;
+    for(;y < realwidth + y_position; y++) {
+      memset (off + x_position, 0xff, realwidth);
+      off += stride;
+    }
+
+    for (plane = 1; plane <= 2; plane++)
     {
-      memset(current_info.data + img_res + y / 4 * filter->width + x_position / 2, 128, realwidth / 2);
-      memset(current_info.data + img_res + y / 4 * filter->width + x_position / 2 + quarter_img_res, 128, realwidth / 2);
-      if (y < (realwidth + y_position) - 4) {
-        memset(current_info.data + img_res + y / 4 * filter->width + x_position / 2 + (filter->width / 2), 128, realwidth / 2);
-        memset(current_info.data + img_res + y / 4 * filter->width + x_position / 2 + quarter_img_res + (filter->width / 2), 128, realwidth / 2);
+      frame_data = (guint8 *) GST_VIDEO_FRAME_PLANE_DATA (frame, plane);
+      stride = GST_VIDEO_INFO_PLANE_STRIDE(&filter->videoinfo, plane);
+      y = y_position;
+      off = frame_data + y/2*stride;
+      for(;y < realwidth + y_position; y+=2) {
+        memset (off + x_position/2, 128, realwidth/2);
+        off += stride;
       }
     }
   }
-#endif
+
   GST_LOG_OBJECT(filter, "Add data in frame");
   /* data */
+  frame_data = (guint8 *) GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
   line += 4 * filter->qrcode_size * filter->width;
   source_data = qrcode->data;
   y = (int)(filter->height - realwidth) / 2;
@@ -540,7 +572,7 @@ void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbu
 	    for(yy=0; yy < filter->qrcode_size; yy++) {
   		  k = ((((line + (4 * filter->qrcode_size))) + filter->width * yy + x * filter->qrcode_size) + x_position) + (y_position * filter->width);
   		  if(*source_data & 1) {
-          memset(current_info.data + k, 0, filter->qrcode_size);
+          memset(frame_data + k, 0, filter->qrcode_size);
         }
 	    }
 	    source_data++;
@@ -548,7 +580,8 @@ void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbu
 	  line += (filter->width * filter->qrcode_size);
   }
   QRcode_free(qrcode);
-  gst_buffer_unmap (outbuf, &current_info);
+  gst_video_frame_unmap (frame);
+  g_free (frame);
 }
 
 /* GstBaseTransform vmethod implementations */
