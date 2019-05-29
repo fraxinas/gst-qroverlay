@@ -530,8 +530,16 @@ void overlay_qr_in_frame(Gstqroverlay *filter, QRcode *qrcode, GstBuffer * outbu
 
   realwidth = (qrcode->width + 4 * 2) * filter->qrcode_size;
 
-  x_position = (int)(filter->width - realwidth) * (filter->x_percent / 100);
-  y_position = (int)(filter->height - realwidth) * (filter->y_percent / 100);
+  if (filter->x_offset == -1)
+    x_position = (int)(filter->width - realwidth) * (filter->x_percent / 100);
+  else
+    x_position = filter->x_offset;
+
+  if (filter->y_offset == -1)
+    y_position = (int)(filter->height - realwidth) * (filter->y_percent / 100);
+  else
+    y_position = filter->y_offset;
+
   x_position = GST_ROUND_DOWN_2(x_position);
   y_position = GST_ROUND_DOWN_4(y_position);
 
